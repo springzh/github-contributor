@@ -11,14 +11,15 @@ import os
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class SimpleGitHubExtractor:
-    def __init__(self, token: Optional[str] = None):
-        """Initialize the extractor with optional GitHub token"""
+    def __init__(self, token: Optional[str] = None, blockchain_csv_path: str = 'evm_blockchains.csv'):
+        """Initialize the extractor with optional GitHub token and blockchain CSV data"""
         self.token = token
         self.session = requests.Session()
         self.session.headers.update({
@@ -32,73 +33,8 @@ class SimpleGitHubExtractor:
         self.last_request_time = 0
         self.min_delay = 2.0  # Increased minimum delay between requests to avoid rate limits
         
-        # Filtered blockchain repositories (EVM-compatible, max 3 per owner)
-        self.blockchain_repos = [
-            {'owner': '0xProject', 'repo': '0x-monorepo', 'name': '0x Protocol'},
-            {'owner': '0xProject', 'repo': '0x-protocol', 'name': '0x Protocol'},
-            {'owner': 'Microsoft', 'repo': 'eEVM', 'name': 'Microsoft eEVM'},
-            {'owner': 'OpenZeppelin', 'repo': 'openzeppelin-contracts', 'name': 'OpenZeppelin Contracts'},
-            {'owner': 'OpenZeppelin', 'repo': 'openzeppelin-sdk', 'name': 'OpenZeppelin SDK'},
-            {'owner': 'ProjectOpenSea', 'repo': 'opensea-js', 'name': 'OpenSea JS'},
-            {'owner': 'a16z', 'repo': 'erc721a', 'name': 'ERC721A'},
-            {'owner': 'aave', 'repo': 'aave-v3-core', 'name': 'Aave V3'},
-            {'owner': 'aave', 'repo': 'aave-protocol', 'name': 'Aave Protocol'},
-            {'owner': 'aave', 'repo': 'aave-v2-core', 'name': 'Aave V2 Core'},
-            {'owner': 'arbitrum', 'repo': 'nitro', 'name': 'Arbitrum Nitro'},
-            {'owner': 'arbitrum', 'repo': 'arbitrum', 'name': 'Arbitrum One'},
-            {'owner': 'avalanche-foundation', 'repo': 'avalanchego', 'name': 'Avalanche Go'},
-            {'owner': 'avalanche-foundation', 'repo': 'subnet-evm', 'name': 'Avalanche Subnet EVM'},
-            {'owner': 'bnb-chain', 'repo': 'bsc', 'name': 'BNB Smart Chain'},
-            {'owner': 'bnb-chain', 'repo': 'bsc-genesis-contract', 'name': 'BNB Smart Chain Genesis'},
-            {'owner': 'brownie-mix', 'repo': 'brownie', 'name': 'Brownie'},
-            {'owner': 'chainlink', 'repo': 'chainlink', 'name': 'Chainlink'},
-            {'owner': 'compound-finance', 'repo': 'compound-protocol', 'name': 'Compound'},
-            {'owner': 'compound-finance', 'repo': 'compound-money-market', 'name': 'Compound Money Market'},
-            {'owner': 'consensys', 'repo': 'goquorum', 'name': 'ConsenSys Quorum'},
-            {'owner': 'consensys', 'repo': 'teku', 'name': 'ConsenSys Teku'},
-            {'owner': 'curvefi', 'repo': 'curve-contracts', 'name': 'Curve Finance'},
-            {'owner': 'curvefi', 'repo': 'curve-dao-contracts', 'name': 'Curve DAO Contracts'},
-            {'owner': 'ethereum', 'repo': 'go-ethereum', 'name': 'Ethereum (Geth)'},
-            {'owner': 'ethereum', 'repo': 'py-evm', 'name': 'Python EVM'},
-            {'owner': 'ethereum', 'repo': 'EIPs', 'name': 'Ethereum Improvement Proposals'},
-            {'owner': 'ethereum-optimism', 'repo': 'optimism', 'name': 'Optimism'},
-            {'owner': 'ethereumjs', 'repo': 'ethereumjs-monorepo', 'name': 'EthereumJS'},
-            {'owner': 'ethers-io', 'repo': 'ethers.js', 'name': 'Ethers.js'},
-            {'owner': 'foundry-rs', 'repo': 'foundry', 'name': 'Foundry'},
-            {'owner': 'foundry-rs', 'repo': 'foundry-up', 'name': 'Foundry Up'},
-            {'owner': 'graphprotocol', 'repo': 'graph-node', 'name': 'The Graph'},
-            {'owner': 'graphprotocol', 'repo': 'graph-client', 'name': 'The Graph Client'},
-            {'owner': 'hardhat', 'repo': 'hardhat', 'name': 'Hardhat'},
-            {'owner': 'hardhat', 'repo': 'hardhat-deploy', 'name': 'Hardhat Deploy'},
-            {'owner': 'horizontalsystems', 'repo': 'ethereum-kit-android', 'name': 'Ethereum Kit Android'},
-            {'owner': 'makerdao', 'repo': 'dss', 'name': 'MakerDAO'},
-            {'owner': 'makerdao', 'repo': 'multicall', 'name': 'MakerDAO Multicall'},
-            {'owner': 'maticnetwork', 'repo': 'polygon-sdk', 'name': 'Polygon SDK'},
-            {'owner': 'maticnetwork', 'repo': 'bor', 'name': 'Polygon Bor'},
-            {'owner': 'maticnetwork', 'repo': 'heimdall', 'name': 'Polygon Heimdall'},
-            {'owner': 'metamask', 'repo': 'metamask-extension', 'name': 'MetaMask'},
-            {'owner': 'metamask', 'repo': 'metamask-mobile', 'name': 'MetaMask Mobile'},
-            {'owner': 'nomiclabs', 'repo': 'hardhat-waffle', 'name': 'Hardhat Waffle'},
-            {'owner': 'paritytech', 'repo': 'substrate', 'name': 'Substrate'},
-            {'owner': 'paritytech', 'repo': 'polkadot', 'name': 'Polkadot'},
-            {'owner': 'remix-project', 'repo': 'remix-ide', 'name': 'Remix IDE'},
-            {'owner': 'remix-project', 'repo': 'remix-desktop', 'name': 'Remix Desktop'},
-            {'owner': 'sushiswap', 'repo': 'sushiswap', 'name': 'SushiSwap'},
-            {'owner': 'sushiswap', 'repo': 'sushiswap-interface', 'name': 'SushiSwap Interface'},
-            {'owner': 'trufflesuite', 'repo': 'truffle', 'name': 'Truffle'},
-            {'owner': 'trufflesuite', 'repo': 'ganache', 'name': 'Ganache'},
-            {'owner': 'uniswap', 'repo': 'uniswap-v3-core', 'name': 'Uniswap V3'},
-            {'owner': 'uniswap', 'repo': 'v2-core', 'name': 'Uniswap V2'},
-            {'owner': 'uniswap', 'repo': 'v2-periphery', 'name': 'Uniswap V2 Periphery'},
-            {'owner': 'vyperlang', 'repo': 'vyper', 'name': 'Vyper'},
-            {'owner': 'walletconnect', 'repo': 'walletconnect-monorepo', 'name': 'WalletConnect'},
-            {'owner': 'walletconnect', 'repo': 'walletconnect-web3-provider', 'name': 'WalletConnect Provider'},
-            {'owner': 'web3', 'repo': 'web3.js', 'name': 'Web3.js'},
-            {'owner': 'web3j', 'repo': 'web3j', 'name': 'Web3j'},
-            {'owner': 'web3j', 'repo': 'web3j-gradle-plugin', 'name': 'Web3j Gradle Plugin'},
-            {'owner': 'yearn', 'repo': 'yearn-vaults', 'name': 'Yearn Finance'},
-            {'owner': 'yearn', 'repo': 'yearn-strategy', 'name': 'Yearn Strategy'},
-        ]
+        # Load blockchain data from CSV file
+        self.blockchain_repos = self._load_blockchain_data(blockchain_csv_path)
 
     def respect_rate_limit(self):
         """Ensure we don't make requests too quickly"""
@@ -162,6 +98,75 @@ class SimpleGitHubExtractor:
                 return None
         
         return None
+
+    def _load_blockchain_data(self, csv_path: str) -> List[Dict]:
+        """Load blockchain data from CSV file and extract GitHub repository information"""
+        blockchain_repos = []
+        
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                
+                for row in reader:
+                    github_url = row.get('GitHub Repository URL', '')
+                    if github_url:
+                        # Parse GitHub URL to extract owner and repo
+                        parsed_url = urlparse(github_url)
+                        path_parts = parsed_url.path.strip('/').split('/')
+                        
+                        if len(path_parts) >= 2:
+                            owner = path_parts[0]
+                            repo = path_parts[1]
+                            project_name = row.get('Project Name', f"{owner}/{repo}")
+                            
+                            blockchain_repos.append({
+                                'owner': owner,
+                                'repo': repo,
+                                'name': project_name,
+                                'layer_type': row.get('Layer Type', ''),
+                                'category': row.get('Category', ''),
+                                'purpose': row.get('Purpose/Specialization', ''),
+                                'description': row.get('Description', '')
+                            })
+                            
+            logger.info(f"Loaded {len(blockchain_repos)} blockchain repositories from {csv_path}")
+            return blockchain_repos
+            
+        except FileNotFoundError:
+            logger.error(f"CSV file not found: {csv_path}")
+            return []
+        except Exception as e:
+            logger.error(f"Error loading blockchain data from {csv_path}: {e}")
+            return []
+
+    def get_top_repositories_for_blockchain(self, owner: str, repo: str, limit: int = 5) -> List[Dict]:
+        """Get top repositories for a blockchain organization"""
+        logger.info(f"🔍 Fetching top {limit} repositories for {owner}...")
+        
+        # Get organization repositories
+        url = f"{self.base_url}/orgs/{owner}/repos?per_page={limit}&sort=stars&order=desc"
+        data = self.make_request(url)
+        
+        if not data:
+            logger.warning(f"⚠️  No repositories found for {owner}")
+            return []
+        
+        if isinstance(data, list):
+            repositories = []
+            for repo_data in data[:limit]:
+                repositories.append({
+                    'owner': owner,
+                    'repo': repo_data['name'],
+                    'name': repo_data['full_name'],
+                    'stars': repo_data.get('stargazers_count', 0),
+                    'description': repo_data.get('description', '')
+                })
+            
+            logger.info(f"✅ Found {len(repositories)} top repositories for {owner}")
+            return repositories
+        else:
+            logger.error(f"❌ Unexpected data format received")
+            return []
 
     def get_top_contributors(self, owner: str, repo: str, max_contributors: int = 3) -> List[Dict]:
         """Get top contributors for a repository"""
@@ -266,12 +271,12 @@ class SimpleGitHubExtractor:
             logger.warning("No data to save")
             return
         
-        fieldnames = [
-            'project_name', 'project_url', 'contributor_username', 'contributor_url',
-            'contributor_name', 'contributor_email', 'contributions', 'twitter',
-            'website', 'location', 'company', 'followers', 'following',
-            'public_repos', 'account_created', 'last_updated'
-        ]
+        # Get all unique keys from all dictionaries to handle dynamic fields
+        all_keys = set()
+        for item in data:
+            all_keys.update(item.keys())
+        
+        fieldnames = sorted(all_keys)
         
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -334,6 +339,91 @@ class SimpleGitHubExtractor:
         
         return output_file
 
+    def run_blockchain_extraction_with_top_repos(self, max_contributors_per_repo: int = 3, output_file: str = None) -> str:
+        """Run the extraction process for blockchain organizations with their top repositories"""
+        if output_file is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = f"blockchain_contributors_{timestamp}.csv"
+        
+        logger.info("🌟 Starting blockchain contributors extraction with top repositories")
+        logger.info(f"📋 Processing {len(self.blockchain_repos)} blockchain organizations")
+        logger.info(f"👥 Getting top {max_contributors_per_repo} contributors per repository")
+        logger.info(f"🔍 Getting top 5 repositories per organization")
+        
+        all_contributors = []
+        seen_usernames = set()  # Track unique usernames to avoid duplicates
+        successful_orgs = 0
+        failed_orgs = 0
+        
+        for i, blockchain_info in enumerate(self.blockchain_repos, 1):
+            owner = blockchain_info['owner']
+            repo = blockchain_info['repo']
+            project_name = blockchain_info['name']
+            
+            logger.info(f"\n📁 [{i}/{len(self.blockchain_repos)}] Processing: {project_name} ({owner})")
+            logger.info("=" * 60)
+            
+            try:
+                # Get top 5 repositories for this blockchain organization
+                top_repos = self.get_top_repositories_for_blockchain(owner, repo, limit=5)
+                
+                if not top_repos:
+                    logger.warning(f"⚠️  No repositories found for {owner}")
+                    failed_orgs += 1
+                    continue
+                
+                # Process each repository
+                for repo_info in top_repos:
+                    logger.info(f"🔍 Processing repository: {repo_info['name']}")
+                    repo_contributors = self.extract_contributors_data(repo_info, max_contributors_per_repo)
+                    
+                    # Add blockchain metadata to each contributor
+                    for contributor in repo_contributors:
+                        contributor['blockchain_name'] = project_name
+                        contributor['blockchain_layer_type'] = blockchain_info.get('layer_type', '')
+                        contributor['blockchain_category'] = blockchain_info.get('category', '')
+                        contributor['blockchain_purpose'] = blockchain_info.get('purpose', '')
+                        contributor['blockchain_description'] = blockchain_info.get('description', '')
+                        contributor['repo_stars'] = repo_info.get('stars', 0)
+                        contributor['repo_description'] = repo_info.get('description', '')
+                    
+                    # Add only new contributors (avoid duplicates)
+                    new_contributors = []
+                    for contributor in repo_contributors:
+                        username = contributor['contributor_username']
+                        if username not in seen_usernames:
+                            seen_usernames.add(username)
+                            new_contributors.append(contributor)
+                        else:
+                            logger.info(f"⚠️  Skipping duplicate contributor: @{username}")
+                    
+                    all_contributors.extend(new_contributors)
+                    logger.info(f"✅ Added {len(new_contributors)} new contributors from {repo_info['name']}")
+                
+                successful_orgs += 1
+                logger.info(f"📈 Total unique contributors so far: {len(all_contributors)}")
+                
+                # Save progress after each organization
+                self.save_to_csv(all_contributors, output_file)
+                
+                # Sleep between organizations to avoid rate limits
+                if i < len(self.blockchain_repos):
+                    logger.info(f"⏳ Sleeping 3 seconds before next organization...")
+                    time.sleep(3)
+                
+            except Exception as e:
+                failed_orgs += 1
+                logger.error(f"❌ Error processing {project_name}: {e}")
+                continue
+        
+        logger.info(f"\n📊 Final Statistics:")
+        logger.info(f"   ✅ Successfully processed: {successful_orgs} organizations")
+        logger.info(f"   ❌ Failed to process: {failed_orgs} organizations")
+        logger.info(f"   👥 Total unique contributors: {len(all_contributors)}")
+        logger.info(f"   📁 Results saved to: {output_file}")
+        
+        return output_file
+
 def main():
     """Main function"""
     print("🚀 Starting GitHub Blockchain Contributors Extraction")
@@ -347,20 +437,21 @@ def main():
         print("   For better results, set: export GITHUB_TOKEN=your_token")
         print()
     
-    # Create extractor
-    extractor = SimpleGitHubExtractor(token)
+    # Create extractor with blockchain CSV data
+    extractor = SimpleGitHubExtractor(token, blockchain_csv_path='evm_blockchains.csv')
     
-    # Run extraction with top 3 contributors per repo
-    print("📊 Extracting top 3 contributors from EVM-compatible blockchain repositories...")
-    output_file = extractor.run_extraction(
-        max_contributors_per_repo=3,  # Get top 3 contributors per repo
-        output_file='blockchain_contributors_simple.csv'
+    # Run extraction with blockchain organizations and their top repositories
+    print("📊 Extracting contributors from blockchain organizations with top repositories...")
+    output_file = extractor.run_blockchain_extraction_with_top_repos(
+        max_contributors_per_repo=3  # Get top 3 contributors per repo
+        # output_file will be auto-generated with timestamp
     )
     
     print(f"\n✅ Extraction completed!")
     print(f"📁 Results saved to: {output_file}")
-    print(f"📈 Total repositories processed: {len(extractor.blockchain_repos)}")
-    print(f"🔥 EVM-compatible repositories only (max 3 per owner)")
+    print(f"📈 Total blockchain organizations processed: {len(extractor.blockchain_repos)}")
+    print(f"🔍 Each organization's top 5 repositories analyzed")
+    print(f"👥 Top 3 contributors per repository extracted")
 
 if __name__ == "__main__":
     main()
